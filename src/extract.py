@@ -18,8 +18,10 @@ from rapidfuzz import process
 
 from .preprocess import normalize_unicode, sentences
 from .skills_taxonomy import (
+    BODY_SECTION_CUES,
     PREFERRED_SECTION_CUES,
     REQUIRED_SECTION_CUES,
+    SKILL_GROUPS,
     build_alias_map,
 )
 
@@ -29,6 +31,11 @@ _ALIAS_TO_CANONICAL, _LOOKUP_TERMS = build_alias_map()
 _STRICT_STANDALONE = {
     "c", "r", "go", "js", "ts", "ml", "dl", "cv", "ir", "tf", "k8s",
     "qa", "ap", "ar", "rn", "cad",
+}
+# English words that also appear as skill aliases — only keep them in list-like lines.
+_AMBIGUOUS_TERMS = {
+    "go", "rest", "node", "spring", "express", "c", "r", "cad", "ir", "cv",
+    "ml", "qa", "ap", "ar", "rn", "js", "ts", "tf",
 }
 
 YEARS_RE = re.compile(
@@ -103,8 +110,40 @@ class ExtractedProfile:
     preferred_skills: List[str] = data_field(default_factory=list)
 
 
+def _skill_haystack(text: str) -> str:
+    """Lowercase text, keep line breaks, turn slashes into spaces for matching."""
+    raw = normalize_unicode(text or "").lower()
+    raw = raw.replace("\u2022", "\n").replace("•", "\n")
+    raw = raw.replace("/", " ").replace("\\", " ").replace("|", " ")
+    raw = re.sub(r"[ \t]+", " ", raw)
+    return raw
+
+
 def _token_windows(text: str) -> str:
-    return re.sub(r"\s+", " ", normalize_unicode(text).lower())
+    return re.sub(r"\s+", " ", _skill_haystack(text))
+
+
+def _line_at(haystack: str, start: int, end: int) -> str:
+    left = haystack.rfind("\n", 0, start) + 1
+    right = haystack.find("\n", end)
+    return haystack[left : right if right >= 0 else None].strip()
+
+
+def _is_list_context(haystack: str, start: int, end: int) -> bool:
+    line = _line_at(haystack, start, end)
+    if not line:
+        return False
+    if line[:1] in {"-", "*", "•"} or re.match(r"^\d+[.)]\s", line):
+        return True
+    if "," in line or ";" in line:
+        return True
+    return bool(
+        re.search(
+            r"\b(python|java|javascript|typescript|sql|aws|azure|react|docker|"
+            r"kubernetes|skill|stack|framework|developer|engineer|languages?)\b",
+            line,
+        )
+    )
 
 
 def _is_standalone_match(haystack: str, start: int, end: int, term: str) -> bool:
@@ -112,10 +151,8 @@ def _is_standalone_match(haystack: str, start: int, end: int, term: str) -> bool
     right_ok = end >= len(haystack) or not haystack[end].isalnum()
     if not (left_ok and right_ok):
         return False
-    if term in _STRICT_STANDALONE:
-        # Avoid matching 'c' inside 'experience' — already handled by boundaries,
-        # but also skip if the token is a common English word context.
-        return True
+    if term in _AMBIGUOUS_TERMS and not _is_list_context(haystack, start, end):
+        return False
     return True
 
 
@@ -132,7 +169,7 @@ def _is_negated(haystack: str, start: int, window: int = 48) -> bool:
 
 def extract_skills(text: str, fuzzy_threshold: int = 92) -> Tuple[List[str], Dict[str, List[str]]]:
     """Return canonical skills and the surface forms that triggered each one."""
-    haystack = _token_windows(text)
+    haystack = _skill_haystack(text)
     found: Dict[str, Set[str]] = {}
     occupied = [False] * len(haystack)
 
@@ -179,6 +216,31 @@ def extract_skills(text: str, fuzzy_threshold: int = 92) -> Tuple[List[str], Dic
     skills = sorted(found.keys())
     mentions = {k: sorted(v) for k, v in found.items()}
     return skills, mentions
+
+
+def terms_for_skill(canonical: str) -> List[str]:
+    aliases = SKILL_GROUPS.get(canonical, [])
+    forms = {canonical.lower(), *[a.lower() for a in aliases]}
+    return sorted(forms, key=len, reverse=True)
+
+
+def text_has_skill(text: str, canonical: str) -> bool:
+    """True if the resume/JD text mentions a skill or one of its aliases."""
+    haystack = _skill_haystack(text)
+    collapsed = re.sub(r"\s+", " ", haystack)
+    for term in terms_for_skill(canonical):
+        spaced = term.replace("/", " ")
+        for hay in (haystack, collapsed):
+            start = 0
+            while True:
+                idx = hay.find(spaced, start)
+                if idx < 0:
+                    break
+                end = idx + len(spaced)
+                if _is_standalone_match(hay, idx, end, term) and not _is_negated(hay, idx):
+                    return True
+                start = idx + 1
+    return False
 
 
 def extract_experience(text: str) -> Experience:
@@ -280,6 +342,9 @@ def _split_jd_sections(text: str) -> Tuple[str, str, str]:
         if _is_section_heading(line, REQUIRED_SECTION_CUES):
             current = "required"
             continue
+        if _is_section_heading(line, BODY_SECTION_CUES):
+            current = "full"
+            continue
         if current == "required":
             required_lines.append(line)
         elif current == "preferred":
@@ -295,13 +360,13 @@ def extract_profile(text: str, is_job_description: bool = False) -> ExtractedPro
     required: List[str] = []
     preferred: List[str] = []
     if is_job_description:
-        _, req_block, pref_block = _split_jd_sections(text)
-        if req_block.strip():
-            required, _ = extract_skills(req_block)
+        _, _req_block, pref_block = _split_jd_sections(text)
         if pref_block.strip():
             preferred, _ = extract_skills(pref_block)
+        # All JD skills are in scope; preferred-section skills stay preferred only.
+        required = [s for s in skills if s not in set(preferred)]
         if not required:
-            required = skills
+            required = list(skills)
         preferred = [s for s in preferred if s not in set(required)]
     return ExtractedProfile(
         skills=skills,

@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
-from .extract import ExtractedProfile, extract_profile
+from .extract import ExtractedProfile, extract_profile, text_has_skill
 from .tfidf import tfidf_cosine
 
 DEFAULT_WEIGHTS = {
@@ -62,8 +62,8 @@ def skill_coverage(resume_skills: Sequence[str], required: Sequence[str]) -> flo
 def experience_fit(resume_years: Optional[float], required_years: Optional[float]) -> float:
     if required_years is None or required_years <= 0:
         if resume_years is None:
-            return 0.55
-        return float(np.clip(0.6 + min(resume_years, 10) / 25.0, 0.0, 1.0))
+            return 0.5
+        return float(np.clip(0.55 + min(resume_years, 10) / 25.0, 0.0, 1.0))
     if resume_years is None:
         return 0.35
     ratio = resume_years / required_years
@@ -76,7 +76,7 @@ def experience_fit(resume_years: Optional[float], required_years: Optional[float
 
 def education_fit(resume_level: int, jd_level: int) -> float:
     if jd_level <= 0:
-        return 0.8 if resume_level >= 2 else 0.55 if resume_level > 0 else 0.4
+        return 0.55 if resume_level >= 2 else 0.5 if resume_level > 0 else 0.45
     if resume_level >= jd_level:
         return 1.0
     if resume_level == 0:
@@ -122,18 +122,26 @@ def match_resume_to_jd(
     req_set = set(required)
     pref_set = set(preferred)
 
-    matched_required = sorted(req_set & resume_set)
-    missing_required = sorted(req_set - resume_set)
-    matched_preferred = sorted(pref_set & resume_set)
-    missing_preferred = sorted(pref_set - resume_set)
+    def _on_resume(skill: str) -> bool:
+        return skill in resume_set or text_has_skill(resume_text, skill)
+
+    matched_required = sorted(s for s in req_set if _on_resume(s))
+    missing_required = sorted(s for s in req_set if not _on_resume(s))
+    matched_preferred = sorted(s for s in pref_set if _on_resume(s))
+    missing_preferred = sorted(s for s in pref_set if not _on_resume(s))
     extra_skills = sorted(resume_set - req_set - pref_set)
 
     breakdown = MatchBreakdown(
-        skill_coverage=skill_coverage(resume_profile.skills, required),
-        tfidf_similarity=tfidf_cosine(resume_text, jd_text),
+        skill_coverage=skill_coverage(matched_required, required) if required else skill_coverage(resume_profile.skills, required),
+        tfidf_similarity=tfidf_cosine(
+            resume_text,
+            jd_text,
+            extra_a=resume_profile.skills + matched_required,
+            extra_b=required + preferred,
+        ),
         experience_fit=experience_fit(resume_profile.experience.years, jd_profile.experience.years),
         education_fit=education_fit(resume_profile.education.level, jd_profile.education.level),
-        preferred_bonus=preferred_bonus(resume_profile.skills, preferred),
+        preferred_bonus=preferred_bonus(matched_preferred, preferred),
     )
     score = weighted_score(breakdown, weights)
     return MatchResult(

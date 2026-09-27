@@ -30,9 +30,16 @@ def _tokenize_doc(text: str) -> List[str]:
     return _ngrams(tokens, (1, 2))
 
 
-def tfidf_cosine(resume_text: str, jd_text: str) -> float:
+def tfidf_cosine(
+    resume_text: str,
+    jd_text: str,
+    extra_a: Sequence[str] | None = None,
+    extra_b: Sequence[str] | None = None,
+) -> float:
     """Cosine similarity of two documents in a 2-document TF-IDF space."""
-    docs = [_tokenize_doc(resume_text), _tokenize_doc(jd_text)]
+    left = f"{resume_text} {' '.join(extra_a or [])}"
+    right = f"{jd_text} {' '.join(extra_b or [])}"
+    docs = [_tokenize_doc(left), _tokenize_doc(right)]
     if not docs[0] or not docs[1]:
         return 0.0
 

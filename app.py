@@ -387,7 +387,12 @@ def page_screen() -> None:
             st.error("Add both a resume and a job description to continue.")
         else:
             with st.spinner("Analyzing resume and job description…"):
-                st.session_state["screen_result"] = screen(resume_text, jd_text)
+                try:
+                    st.session_state["screen_result"] = screen(resume_text, jd_text)
+                except Exception as exc:
+                    st.session_state.pop("screen_result", None)
+                    st.error("Could not compute the match score. Check the resume and job description text.")
+                    st.caption(str(exc))
 
     out = st.session_state.get("screen_result")
     if not out:
@@ -403,7 +408,7 @@ def page_screen() -> None:
         a, b, c = st.columns(3)
         a.metric("Required coverage", f"{gap['required_coverage_pct']}%")
         b.metric("Experience", "Not stated" if years is None else f"{years:g} yrs")
-        c.metric("Education", out["resume"]["education"]["degree"] or "Not stated")
+        c.metric("JD skills found", str(len(out["jd"]["required_skills"] or out["jd"]["skills"])))
 
     with st.container(border=True):
         st.markdown('<div class="panel-label">Score breakdown</div>', unsafe_allow_html=True)
