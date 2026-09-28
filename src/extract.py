@@ -51,6 +51,46 @@ RANGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+EDU_SECTION_CUES = (
+    "education",
+    "academic background",
+    "academic qualification",
+    "academics",
+    "educational qualification",
+    "educational qualifications",
+    "schooling",
+)
+WORK_SECTION_CUES = (
+    "experience",
+    "work history",
+    "work experience",
+    "professional experience",
+    "employment",
+    "employment history",
+    "career",
+)
+OTHER_RESUME_SECTIONS = (
+    "skills",
+    "technical skills",
+    "projects",
+    "certifications",
+    "certification",
+    "summary",
+    "profile",
+    "objective",
+    "awards",
+    "publications",
+    "languages",
+)
+EDU_CONTEXT_RE = re.compile(
+    r"\b(education|bachelor|bachelors|master|masters|mba|phd|doctorate|"
+    r"b\.?\s*tech|b\.?\s*s\.?|m\.?\s*s\.?|m\.?\s*tech|degree|gpa|cgpa|"
+    r"coursework|graduated|graduation|high school|secondary school|"
+    r"senior secondary|matriculation|diploma|student|class of|"
+    r"field of study|undergraduate|postgraduate)\b",
+    re.IGNORECASE,
+)
+
 DEGREE_PATTERNS: List[Tuple[str, str, int]] = [
     (r"\bph\.?d\.?\b|doctor of philosophy|doctorate", "PhD", 4),
     (r"\bm\.?\s*tech\b|\bm\.?\s*e\.?\b|master of technology|mtech", "M.Tech", 3),
@@ -243,19 +283,61 @@ def text_has_skill(text: str, canonical: str) -> bool:
     return False
 
 
+def _is_section_heading(line: str, cues: tuple[str, ...]) -> bool:
+    lowered = line.strip().lower().strip(":-")
+    if not lowered or len(lowered) > 70:
+        return False
+    if lowered[:1] in {"-", "•", "*", "–"}:
+        return False
+    return any(lowered == cue or lowered.startswith(cue + " ") for cue in cues)
+
+
+def _without_education_sections(text: str) -> str:
+    """Drop Education / school blocks so those years are not treated as jobs."""
+    kept: List[str] = []
+    current = "other"
+    for line in normalize_unicode(text or "").splitlines():
+        if _is_section_heading(line, EDU_SECTION_CUES):
+            current = "education"
+            continue
+        if _is_section_heading(line, WORK_SECTION_CUES + OTHER_RESUME_SECTIONS):
+            current = "other"
+        if current != "education":
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def _span_is_education(text: str, start: int, end: int) -> bool:
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    line = text[line_start : line_end if line_end >= 0 else None]
+    window = text[max(0, start - 90) : min(len(text), end + 90)]
+    if EDU_CONTEXT_RE.search(line) or EDU_CONTEXT_RE.search(window):
+        return True
+    if INSTITUTION_RE.search(line) and not any(cue in line.lower() for cue in TITLE_CUES):
+        return True
+    return False
+
+
 def extract_experience(text: str) -> Experience:
+    work_text = _without_education_sections(text)
     years: List[float] = []
     for pattern in (YEARS_RE, YEARS_ALT_RE):
-        for match in pattern.finditer(text or ""):
+        for match in pattern.finditer(work_text or ""):
             try:
                 years.append(float(match.group("years")))
             except (TypeError, ValueError):
                 continue
 
-    spans = [m.group(0) for m in RANGE_RE.finditer(text or "")]
-    if not years and spans:
+    work_spans = []
+    for match in RANGE_RE.finditer(work_text or ""):
+        if _span_is_education(work_text, match.start(), match.end()):
+            continue
+        work_spans.append(match.group(0))
+
+    if not years and work_spans:
         total = 0.0
-        for span in spans:
+        for span in work_spans:
             parts = re.split(r"[-–—]|to", span, flags=re.IGNORECASE)
             if len(parts) != 2:
                 continue
@@ -272,8 +354,10 @@ def extract_experience(text: str) -> Experience:
             years.append(total)
 
     titles: List[str] = []
-    for sent in sentences(text):
+    for sent in sentences(work_text):
         lower = sent.lower()
+        if EDU_CONTEXT_RE.search(lower):
+            continue
         if any(cue in lower for cue in TITLE_CUES) and len(sent) < 140:
             cleaned = re.sub(r"\s+", " ", sent).strip(" -•|\t")
             if cleaned and cleaned not in titles:
@@ -284,7 +368,7 @@ def extract_experience(text: str) -> Experience:
     return Experience(
         years=max(years) if years else None,
         titles=titles[:8],
-        date_spans=spans[:8],
+        date_spans=work_spans[:8],
     )
 
 
@@ -317,15 +401,6 @@ def extract_education(text: str) -> Education:
         institution=institution,
         raw_mentions=list(dict.fromkeys(mentions)),
     )
-
-
-def _is_section_heading(line: str, cues: tuple[str, ...]) -> bool:
-    lowered = line.strip().lower().strip(":-")
-    if not lowered or len(lowered) > 70:
-        return False
-    if lowered[:1] in {"-", "•", "*", "–"}:
-        return False
-    return any(lowered == cue or lowered.startswith(cue + " ") for cue in cues)
 
 
 def _split_jd_sections(text: str) -> Tuple[str, str, str]:

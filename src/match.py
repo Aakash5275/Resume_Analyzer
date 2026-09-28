@@ -11,10 +11,10 @@ from .extract import ExtractedProfile, extract_profile, text_has_skill
 from .tfidf import tfidf_cosine
 
 DEFAULT_WEIGHTS = {
-    "skill_coverage": 0.55,
-    "tfidf_similarity": 0.15,
-    "experience_fit": 0.15,
-    "education_fit": 0.10,
+    "skill_coverage": 0.65,
+    "tfidf_similarity": 0.18,
+    "experience_fit": 0.0,
+    "education_fit": 0.12,
     "preferred_bonus": 0.05,
 }
 

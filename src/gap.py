@@ -80,14 +80,6 @@ def build_gap_report(result: MatchResult) -> Dict:
         suggestions.append(
             f"Add concrete project or work evidence for: {top}."
         )
-    years = result.resume_profile.experience.years
-    needed = result.jd_profile.experience.years
-    if needed and (years is None or years < needed):
-        have = "not stated" if years is None else f"{years:g} years"
-        suggestions.append(
-            f"The role asks for about {needed:g} years of experience; the resume shows {have}. "
-            "Call out internships, freelance, or project duration more clearly."
-        )
     if result.jd_profile.education.level and result.resume_profile.education.level < result.jd_profile.education.level:
         suggestions.append(
             "Education level is below the JD requirement. Mention equivalent coursework or certifications."

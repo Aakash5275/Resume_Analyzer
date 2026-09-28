@@ -13,7 +13,7 @@ It extracts skills, experience, and education from unstructured text, scores how
 Match score weights:
 
 ```
-0.55 skill coverage + 0.15 TF-IDF + 0.15 experience + 0.10 education + 0.05 preferred
+0.65 skill coverage + 0.18 TF-IDF + 0.12 education + 0.05 preferred
 ```
 
 ## Requirements

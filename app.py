@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 import streamlit as st
 
 from src.builder import build_resume, ensure_doc
+from src.gemini_resume import tailor_resume
 from src.io_utils import load_uploaded_file
 from src.pipeline import screen
 from src.resume_format import NO_PHOTO, PHOTO, render_html, render_pdf
@@ -400,20 +401,23 @@ def page_screen() -> None:
         return
 
     gap = out["gap_report"]
-    years = gap["experience"]["resume_years"]
     top, side = st.columns([1.15, 1.85], gap="large")
     with top:
         _score_panel(out["score"], gap["verdict"])
     with side:
-        a, b, c = st.columns(3)
+        a, b = st.columns(2)
         a.metric("Required coverage", f"{gap['required_coverage_pct']}%")
-        b.metric("Experience", "Not stated" if years is None else f"{years:g} yrs")
-        c.metric("JD skills found", str(len(out["jd"]["required_skills"] or out["jd"]["skills"])))
+        b.metric("JD skills found", str(len(out["jd"]["required_skills"] or out["jd"]["skills"])))
 
     with st.container(border=True):
         st.markdown('<div class="panel-label">Score breakdown</div>', unsafe_allow_html=True)
+        hidden = {"Experience fit"}
         st.dataframe(
-            [{"Component": name, "Score": value} for name, value in out["breakdown"].items()],
+            [
+                {"Component": name, "Score": value}
+                for name, value in out["breakdown"].items()
+                if name not in hidden
+            ],
             use_container_width=True,
             hide_index=True,
         )
@@ -518,9 +522,9 @@ def page_builder() -> None:
     st.markdown("</div>", unsafe_allow_html=True)
     _hero(
         "Builder",
-        "Draft a resume for the role",
-        "Pick a layout, paste the job, then preview, edit, and download a PDF.",
-        ["Choose a format", "Build from the JD", "Edit preview and download PDF"],
+        "A resume written for the job",
+        "Gemini reads the job description, then writes a formatted resume you can preview, edit, and download.",
+        ["Choose a format", "Paste the job", "Preview and download PDF"],
     )
 
     with st.container(border=True):
@@ -578,7 +582,7 @@ def page_builder() -> None:
         if not jd_text.strip():
             st.error("Add a job description first.")
         else:
-            with st.spinner("Building a JD-aligned draft…"):
+            with st.spinner("Reading the job and writing your resume…"):
                 built = build_resume(
                     jd_text,
                     source_resume=source,
@@ -586,6 +590,20 @@ def page_builder() -> None:
                     contact=contact,
                     target_title=title,
                 )
+                try:
+                    polished = tailor_resume(
+                        jd_text,
+                        source_resume=source,
+                        name=name,
+                        contact=contact,
+                        target_title=title,
+                    )
+                    built["doc"] = polished
+                    built["role"] = polished.get("title") or built["role"]
+                    built["generated_by"] = "Gemini"
+                except Exception as exc:
+                    built["generated_by"] = "Local draft"
+                    st.warning(f"Gemini could not finish the draft, so a local version was used. {exc}")
                 st.session_state["builder_result"] = built
                 _sync_editor(ensure_doc(built))
 
@@ -602,7 +620,7 @@ def page_builder() -> None:
     m1, m2, m3 = st.columns(3)
     m1.metric("Target role", out["role"][:28] + ("…" if len(out["role"]) > 28 else ""))
     m2.metric("JD skills used", str(len(out["required_skills"])))
-    m3.metric("Used your resume", "Yes" if out["used_source_resume"] else "Template")
+    m3.metric("Writer", out.get("generated_by") or "Local draft")
 
     g1, g2 = st.columns(2, gap="large")
     with g1:

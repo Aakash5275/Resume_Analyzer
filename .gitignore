@@ -26,13 +26,16 @@ htmlcov/
 .tox/
 .nox/
 
-# Environment and secrets
+# Environment and secrets (API keys stay local)
 .env
 .env.*
 !.env.example
 *.pem
 kaggle.json
+credentials.json
+secrets.toml
 .streamlit/secrets.toml
+**/.streamlit/secrets.toml
 
 # Local caches and generated data
 .cache_uploads/

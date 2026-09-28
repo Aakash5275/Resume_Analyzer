@@ -34,6 +34,10 @@ def _photo_src(photo_bytes: Optional[bytes], mime: str = "image/jpeg") -> str:
     return f"data:{mime};base64,{base64.b64encode(photo_bytes).decode('ascii')}"
 
 
+def _is_role_line(line: str) -> bool:
+    return "|" in line and not _BULLET.match(line)
+
+
 def _block_html(text: str) -> str:
     parts: list[str] = []
     bullets: list[str] = []
@@ -52,8 +56,14 @@ def _block_html(text: str) -> str:
             continue
         if _BULLET.match(line):
             bullets.append(_BULLET.sub("", line))
+            continue
+        flush()
+        if _is_role_line(line):
+            bits = [part.strip() for part in line.split("|")]
+            role = _esc(bits[0] if bits else line)
+            meta = _esc("  ·  ".join(bits[1:])) if len(bits) > 1 else ""
+            parts.append(f'<div class="role"><strong>{role}</strong><span>{meta}</span></div>')
         else:
-            flush()
             parts.append(f"<p>{_esc(line)}</p>")
     flush()
     return "".join(parts) or "<p></p>"
@@ -91,7 +101,11 @@ def render_html(doc: Dict[str, str], layout: str, photo_bytes: Optional[bytes] =
     h1,h2,h3,h4,p,ul { margin: 0; }
     ul { padding-left: 1.1rem; }
     li, p { font-size: 12.5px; line-height: 1.45; color: #334155; }
-    .sec { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #2563eb; margin: 16px 0 8px; font-weight: 700; }
+    .sec { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #1d4ed8;
+           margin: 18px 0 8px; font-weight: 800; border-bottom: 1.5px solid #dbe7ff; padding-bottom: 4px; }
+    .role { margin: 10px 0 2px; }
+    .role strong { display: block; font-size: 13.5px; color: #0f172a; }
+    .role span { display: block; font-size: 11.5px; color: #64748b; margin-top: 1px; }
     .pill { display: inline-block; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
             border-radius: 999px; padding: 3px 8px; margin: 0 6px 6px 0; font-size: 11px; font-weight: 650; }
     .muted { color: #94a3b8; }
@@ -204,6 +218,15 @@ def _write_wrapped(pdf: FPDF, x: float, text: str, width: float, size: int = 9) 
             continue
         if _BULLET.match(line):
             line = "- " + _BULLET.sub("", line)
+            pdf.set_font("Helvetica", size=size)
+            pdf.set_text_color(51, 65, 85)
+        elif "|" in line:
+            pdf.ln(1.5)
+            pdf.set_font("Helvetica", "B", size)
+            pdf.set_text_color(15, 23, 42)
+        else:
+            pdf.set_font("Helvetica", size=size)
+            pdf.set_text_color(51, 65, 85)
         _wrap(pdf, x, width, line)
 
 
